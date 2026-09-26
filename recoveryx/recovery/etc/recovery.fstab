@@ -1,0 +1,70 @@
+# Copyright (C) 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+# Infinix X6525 (Unisoc UMS9230) — Lineage Recovery
+
+# === Unisoc bootloader/modem partitions ===
+/dev/block/mmcblk0boot0           /spl           emmc   defaults   slotselect
+/dev/block/mmcblk0boot1           /spl_bk        emmc   defaults   defaults
+/dev/block/by-name/uboot          /uboot         emmc   defaults   slotselect
+/dev/block/by-name/sml            /sml           emmc   defaults   slotselect
+/dev/block/by-name/trustos        /tos           emmc   defaults   slotselect
+/dev/block/by-name/teecfg         /teecfg        emmc   defaults   slotselect
+/dev/block/by-name/pm_sys         /pmsys         emmc   defaults   slotselect
+/dev/block/by-name/misc           /misc          emmc   defaults   defaults
+
+# === Verity/vbmeta ===
+/dev/block/by-name/vbmeta         /vbmeta         emmc  defaults   slotselect
+/dev/block/by-name/vbmeta_system  /vbmeta_system  emmc  defaults   slotselect
+/dev/block/by-name/vbmeta_vendor  /vbmeta_vendor  emmc  defaults   slotselect
+
+# === Boot images ===
+/dev/block/by-name/boot           /boot          emmc   defaults   slotselect
+/dev/block/by-name/dtbo           /dtbo          emmc   defaults   slotselect
+
+# === Modem/DSP firmware ===
+/dev/block/by-name/l_ldsp         /ltedsp        emmc   defaults   slotselect
+/dev/block/by-name/l_gdsp         /ltegdsp       emmc   defaults   slotselect
+/dev/block/by-name/l_agdsp        /lteagdsp      emmc   defaults   slotselect
+/dev/block/by-name/l_cdsp         /ltecdsp       emmc   defaults   slotselect
+/dev/block/by-name/l_modem        /ltemodem      emmc   defaults   slotselect
+/dev/block/by-name/wcnmodem       /wcnmodem      emmc   defaults   slotselect
+/dev/block/by-name/gnssmodem      /gnssmodem     emmc   defaults   slotselect
+/dev/block/by-name/l_fixnv1       /ltefixnv1     emmc   defaults   defaults
+/dev/block/by-name/l_fixnv2       /ltefixnv2     emmc   defaults   defaults
+/dev/block/by-name/l_deltanv      /ltedeltanv    emmc   defaults   slotselect
+/dev/block/by-name/l_runtimenv1   /lteruntimenv1 emmc   defaults   defaults
+/dev/block/by-name/l_runtimenv2   /lteruntimenv2 emmc   defaults   defaults
+
+# === Logo/misc images ===
+/dev/block/by-name/logo           /logo          emmc   defaults   defaults
+/dev/block/by-name/fbootlogo      /fbootlogo     emmc   defaults   defaults
+
+# === Persistent ===
+/dev/block/by-name/persist        /persist       ext4   noatime,nosuid,nodev,barrier=1   wait,check
+/dev/block/by-name/prodnv         /mnt/vendor    ext4   noatime,nosuid,nodev,barrier=1   wait,check
+/dev/block/by-name/metadata       /metadata      f2fs   noatime,nosuid,nodev,discard     wait,formattable,check
+/dev/block/by-name/metadata       /metadata      ext4   noatime,nosuid,nodev,barrier=1   wait,formattable,check
+
+# === Dynamic (logical) partitions ===
+system       /system       erofs   ro   wait,slotselect,logical,first_stage_mount
+system       /system       ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+system_ext   /system_ext   erofs   ro   wait,slotselect,logical,first_stage_mount
+system_ext   /system_ext   ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+vendor       /vendor       erofs   ro   wait,slotselect,logical,first_stage_mount
+vendor       /vendor       ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+odm          /odm          erofs   ro   wait,slotselect,logical,first_stage_mount
+odm          /odm          ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+product      /product      erofs   ro   wait,slotselect,logical,first_stage_mount
+product      /product      ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+vendor_dlkm  /vendor_dlkm  erofs   ro   wait,slotselect,logical,first_stage_mount
+vendor_dlkm  /vendor_dlkm  ext4    ro,barrier=1  wait,slotselect,logical,first_stage_mount
+
+# === Cache & data ===
+/dev/block/by-name/cache          /cache         f2fs  noatime,nosuid,nodev,discard,inline_xattr,inline_data  wait,check,formattable
+/dev/block/by-name/cache          /cache         ext4  noatime,nosuid,nodev,barrier=1                        wait,check,formattable
+/dev/block/by-name/userdata       /data          f2fs  noatime,nosuid,nodev,discard,inline_xattr,inline_data  wait,check,formattable,quota,resize,fileencryption=aes-256-xts:aes-256-cts,keydirectory=/metadata/vold/metadata_encryption,latemount
+
+# === External ===
+/dev/block/mmcblk1p1              /sdcard        vfat  defaults  wait
+/devices/platform/soc/soc:*/*.usb/musb-hdrc.*.auto/usb*  auto  vfat  defaults  voldmanaged=usbdisk:auto
+/devices/platform/soc/soc:ap-*/*.sdio/mmc_host/mmc1/mmc1:*/block/mmcblk1  auto  vfat  defaults  voldmanaged=sdcard0:auto,noemulatedsd
