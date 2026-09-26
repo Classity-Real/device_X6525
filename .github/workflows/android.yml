@@ -1,0 +1,136 @@
+name: Build Lineage Recovery
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          overprovision-lvm: 'true'
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python-is-python3 openjdk-11-jdk
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure git and ccache
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=20G" >> $GITHUB_ENV
+
+      - name: Cache repo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/lineage/.repo
+            ~/lineage/.repo/projects
+            ~/lineage/.repo/project-objects
+          key: reposync-lineage22-v1
+          restore-keys: reposync-lineage22-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-lineage22-v1
+          restore-keys: ccache-lineage22-
+
+      - name: Init LineageOS 22.1
+        run: |
+          mkdir -p ~/lineage && cd ~/lineage
+          repo init \
+            -u https://github.com/LineageOS/android.git \
+            -b lineage-22.1 \
+            --depth=1 \
+            --partial-clone \
+            --clone-filter=blob:none \
+            --no-tags
+
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: _device_tree
+
+      - name: Place device tree
+        run: |
+          mkdir -p ~/lineage/device/infinix/X6525
+          cp -a _device_tree/. ~/lineage/device/infinix/X6525/
+          echo "=== Device tree files ==="
+          ls -la ~/lineage/device/infinix/X6525/
+
+      - name: Sync sources
+        run: |
+          cd ~/lineage
+          repo sync -c -j4 \
+            --force-sync --no-clone-bundle --no-tags \
+            --optimized-fetch --prune
+
+      - name: Prepare kernel
+        run: |
+          cd ~/lineage/device/infinix/X6525/prebuilts
+          if [ -f kernel.gz ]; then
+            gunzip -f kernel.gz
+          fi
+          echo "=== prebuilts contents ==="
+          ls -la
+          file kernel || true
+          file dtb.img || true
+          file dtbo.img || true
+
+      - name: Build Lineage Recovery
+        run: |
+          cd ~/lineage
+          source build/envsetup.sh
+          ccache -M 20G
+          ccache -z
+          lunch lineage_X6525-userdebug
+          mka vendor_bootimage -j2
+
+      - name: List build outputs
+        if: always()
+        run: |
+          echo "=== Build outputs ==="
+          ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files"
+
+      - name: Upload vendor_boot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineage-X6525-vendor_boot
+          path: ~/lineage/out/target/product/X6525/vendor_boot.img
+          retention-days: 14
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s
