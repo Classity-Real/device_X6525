@@ -56,14 +56,14 @@ jobs:
             ~/lineage/.repo
             ~/lineage/.repo/projects
             ~/lineage/.repo/project-objects
-          key: reposync-lineage22-v1
+          key: reposync-lineage22-v2
           restore-keys: reposync-lineage22-
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-lineage22-v1
+          key: ccache-lineage22-v2
           restore-keys: ccache-lineage22-
 
       - name: Init LineageOS 22.1
@@ -73,8 +73,6 @@ jobs:
             -u https://github.com/LineageOS/android.git \
             -b lineage-22.1 \
             --depth=1 \
-            --partial-clone \
-            --clone-filter=blob:none \
             --no-tags
 
       - name: Checkout device tree
@@ -94,7 +92,8 @@ jobs:
           cd ~/lineage
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
-            --optimized-fetch --prune
+            --optimized-fetch --prune || \
+          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
 
       - name: Prepare kernel
         run: |
