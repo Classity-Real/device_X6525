@@ -38,6 +38,8 @@ jobs:
           df -i /
           echo "=== Memory ==="
           free -h
+          echo "=== Swap ==="
+          swapon --show
 
       - name: Install build deps
         run: |
@@ -50,7 +52,6 @@ jobs:
             schedtool squashfs-tools xsltproc zip zlib1g-dev \
             python3 python-is-python3 openjdk-11-jdk
           df -h /
-          free -h
 
       - name: Install repo
         run: |
@@ -68,27 +69,30 @@ jobs:
           echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=20G" >> $GITHUB_ENV
-          echo "CCACHE_NOCOMPRESS=1" >> $GITHUB_ENV
           echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
 
-      - name: Cache repo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/lineage/.repo
-            ~/lineage/.repo/projects
-            ~/lineage/.repo/project-objects
-          key: reposync-lineage20-v2
-          restore-keys: reposync-lineage20-
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-lineage20-v2
-          restore-keys: ccache-lineage20-
+      # ==========================================
+      # CACHING DISABLED FOR FIRST CLEAN BUILD
+      # Re-enable after one successful build
+      # ==========================================
+      # - name: Cache repo
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ~/lineage/.repo
+      #       ~/lineage/.repo/projects
+      #       ~/lineage/.repo/project-objects
+      #     key: reposync-lineage20-v3
+      #     restore-keys: reposync-lineage20-
+      #
+      # - name: Cache ccache
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.ccache
+      #     key: ccache-lineage20-v3
+      #     restore-keys: ccache-lineage20-
 
       - name: Init LineageOS 20.0
         run: |
@@ -123,7 +127,6 @@ jobs:
           echo "=== Disk before sync ==="
           df -h /
           df -i /
-          df -h ~/lineage/tmp
 
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
@@ -132,19 +135,26 @@ jobs:
 
           echo "=== Disk after sync ==="
           df -h /
+          echo "=== .repo size ==="
           du -sh .repo/
 
       - name: Prepare kernel
         run: |
           cd ~/lineage/device/infinix/X6525/prebuilts
           if [ -f kernel.gz ]; then
+            echo "Decompressing kernel.gz..."
             gunzip -f kernel.gz
           fi
           echo "=== prebuilts contents ==="
           ls -la
+          echo "=== kernel type ==="
           file kernel || true
+          echo "=== dtb type ==="
           file dtb.img || true
+          echo "=== dtbo type ==="
           file dtbo.img || true
+          echo "=== modules count ==="
+          ls modules_recovery_ramdisk/*.ko 2>/dev/null | wc -l
 
       - name: Build Lineage Recovery
         run: |
@@ -156,13 +166,15 @@ jobs:
           df -h /
           echo "=== Memory before build ==="
           free -h
+          echo "=== Swap ==="
+          swapon --show
 
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
 
-          # Monitor memory in background every 60s
+          # Monitor memory every 60s in background
           ( while true; do \
               echo "=== $(date +%H:%M:%S) memory ==="; \
               free -h | head -2 | tail -1; \
@@ -170,7 +182,7 @@ jobs:
             done ) &
           MONITOR_PID=$!
 
-          # Build with LOW parallelism to fit in 7 GB RAM
+          # Build with -j1 for low memory usage
           mka vendor_bootimage -j1
 
           kill $MONITOR_PID 2>/dev/null || true
@@ -184,12 +196,13 @@ jobs:
         if: always()
         run: |
           echo "=== Build outputs ==="
-          ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files"
+          ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files found"
+          echo ""
+          echo "=== Full out dir ==="
+          find ~/lineage/out/target/product/X6525 -maxdepth 1 -type f 2>/dev/null | head -30
           echo ""
           echo "=== Final disk ==="
           df -h /
-          echo "=== Final memory ==="
-          free -h
 
       - name: Upload vendor_boot
         if: success()
@@ -197,6 +210,7 @@ jobs:
         with:
           name: lineage-X6525-vendor_boot
           path: ~/lineage/out/target/product/X6525/vendor_boot.img
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Upload build logs
