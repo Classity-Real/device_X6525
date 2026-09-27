@@ -9,9 +9,6 @@ jobs:
     timeout-minutes: 480
 
     steps:
-      # ==========================================
-      # STEP 1: Audit disk before ANY cleanup
-      # ==========================================
       - name: Audit disk usage
         run: |
           echo "=== Disk usage BEFORE cleanup ==="
@@ -26,15 +23,12 @@ jobs:
           echo "=== /opt breakdown ==="
           sudo du -hx --max-depth=1 /opt 2>/dev/null | sort -hr | head -15
           echo ""
-          echo "=== Memory ==="
+          echo "=== Memory + Swap ==="
           free -h
+          swapon --show
 
-      # ==========================================
-      # STEP 2: Manual cleanup (no maximize-build-space)
-      # ==========================================
       - name: Free space manually
         run: |
-          # Common big directories on GitHub runners
           sudo rm -rf /usr/local/lib/android      || true
           sudo rm -rf /usr/local/share/boost      || true
           sudo rm -rf /usr/local/share/powershell || true
@@ -61,47 +55,26 @@ jobs:
           sudo rm -rf /usr/lib/jvm                || true
           sudo rm -rf /usr/lib/firefox            || true
           sudo rm -rf /usr/lib/mono               || true
-          
-          # Docker
           sudo docker image prune -a -f 2>/dev/null || true
           sudo docker system prune -a -f 2>/dev/null || true
-          
-          # Package caches
           sudo apt-get clean
           sudo apt-get autoclean
           sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
           sudo rm -rf /var/cache/apt/archives/* 2>/dev/null || true
-          
           echo "=== Disk AFTER cleanup ==="
           df -h /
 
-      # ==========================================
-      # STEP 3: Create swap (safely, only if space)
-      # ==========================================
-      - name: Create swap file
+      - name: Verify swap
         run: |
-          AVAIL=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
-          echo "Available space: ${AVAIL}G"
-          
-          if [ "$AVAIL" -lt 25 ]; then
-            echo "WARNING: Only ${AVAIL}G available – skipping swap"
-            exit 0
-          fi
-          
-          echo "Creating 16G swapfile..."
-          sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          
-          echo "=== Swap active ==="
+          echo "=== Existing swap ==="
           swapon --show
+          echo ""
+          echo "=== Memory ==="
           free -h
+          echo ""
+          echo "=== Disk ==="
           df -h /
 
-      # ==========================================
-      # STEP 4: Install build dependencies
-      # ==========================================
       - name: Install build deps
         run: |
           sudo apt-get update
@@ -115,9 +88,6 @@ jobs:
           echo "=== Disk after deps ==="
           df -h /
 
-      # ==========================================
-      # STEP 5: Install repo tool
-      # ==========================================
       - name: Install repo
         run: |
           mkdir -p ~/bin
@@ -125,9 +95,6 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      # ==========================================
-      # STEP 6: Configure git, ccache, TMPDIR
-      # ==========================================
       - name: Configure git and ccache
         run: |
           git config --global user.name "GitHub Actions"
@@ -141,9 +108,6 @@ jobs:
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
 
-      # ==========================================
-      # STEP 7: Init LineageOS 20.0 (smaller than 22.1)
-      # ==========================================
       - name: Init LineageOS 20.0
         run: |
           mkdir -p ~/lineage/tmp
@@ -158,9 +122,6 @@ jobs:
           echo "=== Disk after init ==="
           df -h /
 
-      # ==========================================
-      # STEP 8: Checkout device tree from this repo
-      # ==========================================
       - name: Checkout device tree
         uses: actions/checkout@v4
         with:
@@ -173,31 +134,21 @@ jobs:
           echo "=== Device tree files ==="
           ls -la ~/lineage/device/infinix/X6525/
 
-      # ==========================================
-      # STEP 9: Sync LineageOS sources
-      # ==========================================
       - name: Sync sources
         run: |
           cd ~/lineage
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
-
           echo "=== Disk BEFORE sync ==="
           df -h /
-
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
             --optimized-fetch --prune || \
           repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
-
           echo "=== Disk AFTER sync ==="
           df -h /
-          echo "=== .repo size ==="
           du -sh .repo/
 
-      # ==========================================
-      # STEP 10: Prepare kernel/dtb/dtbo
-      # ==========================================
       - name: Prepare kernel
         run: |
           cd ~/lineage/device/infinix/X6525/prebuilts
@@ -216,48 +167,34 @@ jobs:
           echo "=== modules count ==="
           ls modules_recovery_ramdisk/*.ko 2>/dev/null | wc -l
 
-      # ==========================================
-      # STEP 11: Build Lineage Recovery
-      # ==========================================
       - name: Build Lineage Recovery
         run: |
           cd ~/lineage
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
-
           echo "=== Disk BEFORE build ==="
           df -h /
           echo "=== Memory BEFORE build ==="
           free -h
           echo "=== Swap ==="
           swapon --show
-
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
-
-          # Background memory monitor
           ( while true; do \
               echo "=== $(date +%H:%M:%S) memory ==="; \
               free -h | head -2 | tail -1; \
               sleep 120; \
             done ) &
           MONITOR_PID=$!
-
-          # Build with -j4 (runner has 15 GB RAM)
           mka vendor_bootimage -j4
-
           kill $MONITOR_PID 2>/dev/null || true
-
           echo "=== Disk AFTER build ==="
           df -h /
           echo "=== Memory AFTER build ==="
           free -h
 
-      # ==========================================
-      # STEP 12: List outputs (runs even on failure)
-      # ==========================================
       - name: List build outputs
         if: always()
         run: |
@@ -270,9 +207,6 @@ jobs:
           echo "=== Final disk ==="
           df -h /
 
-      # ==========================================
-      # STEP 13: Upload vendor_boot.img
-      # ==========================================
       - name: Upload vendor_boot
         if: success()
         uses: actions/upload-artifact@v4
@@ -282,9 +216,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # ==========================================
-      # STEP 14: Upload build logs (always)
-      # ==========================================
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -296,9 +227,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # ==========================================
-      # STEP 15: Show final stats
-      # ==========================================
       - name: Show ccache stats
         if: always()
         run: ccache -s 2>/dev/null || true
