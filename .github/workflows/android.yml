@@ -20,6 +20,22 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
+      - name: Verify cleanup worked
+        run: |
+          echo "=== Disk after maximize-build-space ==="
+          df -h /
+          echo ""
+          echo "=== What's using space in /usr ==="
+          du -sh /usr/* 2>/dev/null | sort -h | tail -10
+          echo ""
+          echo "=== What's using space in /opt ==="
+          du -sh /opt/* 2>/dev/null | sort -h | tail -10
+          echo ""
+          echo "=== Memory ==="
+          free -h
+          echo "=== Swap ==="
+          swapon --show
+
       - name: Extra aggressive cleanup
         run: |
           sudo rm -rf /usr/share/dotnet 2>/dev/null || true
@@ -31,15 +47,15 @@ jobs:
           sudo rm -rf /usr/share/miniconda 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
           sudo rm -rf /usr/local/aws-cli 2>/dev/null || true
+          sudo rm -rf /usr/local/.ghcup 2>/dev/null || true
+          sudo rm -rf /usr/lib/google-cloud-sdk 2>/dev/null || true
+          sudo rm -rf /usr/local/share/chromium 2>/dev/null || true
+          sudo rm -rf /opt/microsoft 2>/dev/null || true
           sudo apt-get clean
           sudo apt-get autoclean
-          echo "=== Disk after cleanup ==="
+          echo "=== Disk after extra cleanup ==="
           df -h /
           df -i /
-          echo "=== Memory ==="
-          free -h
-          echo "=== Swap ==="
-          swapon --show
 
       - name: Install build deps
         run: |
@@ -51,6 +67,7 @@ jobs:
             libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
             schedtool squashfs-tools xsltproc zip zlib1g-dev \
             python3 python-is-python3 openjdk-11-jdk
+          echo "=== Disk after deps ==="
           df -h /
 
       - name: Install repo
@@ -73,26 +90,10 @@ jobs:
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
 
-      # ==========================================
-      # CACHING DISABLED FOR FIRST CLEAN BUILD
-      # Re-enable after one successful build
-      # ==========================================
-      # - name: Cache repo
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ~/lineage/.repo
-      #       ~/lineage/.repo/projects
-      #       ~/lineage/.repo/project-objects
-      #     key: reposync-lineage20-v3
-      #     restore-keys: reposync-lineage20-
-      #
-      # - name: Cache ccache
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: ~/.ccache
-      #     key: ccache-lineage20-v3
-      #     restore-keys: ccache-lineage20-
+      # ================================================
+      # CACHE STEPS REMOVED COMPLETELY
+      # First build must be clean — no stale .repo
+      # ================================================
 
       - name: Init LineageOS 20.0
         run: |
@@ -105,6 +106,8 @@ jobs:
             --partial-clone \
             --clone-filter=blob:none \
             --no-tags
+          echo "=== Disk after init ==="
+          df -h /
 
       - name: Checkout device tree
         uses: actions/checkout@v4
@@ -124,7 +127,7 @@ jobs:
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
 
-          echo "=== Disk before sync ==="
+          echo "=== Disk BEFORE sync ==="
           df -h /
           df -i /
 
@@ -133,9 +136,8 @@ jobs:
             --optimized-fetch --prune || \
           repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
 
-          echo "=== Disk after sync ==="
+          echo "=== Disk AFTER sync ==="
           df -h /
-          echo "=== .repo size ==="
           du -sh .repo/
 
       - name: Prepare kernel
@@ -162,9 +164,9 @@ jobs:
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
 
-          echo "=== Disk before build ==="
+          echo "=== Disk BEFORE build ==="
           df -h /
-          echo "=== Memory before build ==="
+          echo "=== Memory BEFORE build ==="
           free -h
           echo "=== Swap ==="
           swapon --show
@@ -174,7 +176,7 @@ jobs:
           ccache -z
           lunch lineage_X6525-userdebug
 
-          # Monitor memory every 60s in background
+          # Background memory monitor
           ( while true; do \
               echo "=== $(date +%H:%M:%S) memory ==="; \
               free -h | head -2 | tail -1; \
@@ -182,14 +184,14 @@ jobs:
             done ) &
           MONITOR_PID=$!
 
-          # Build with -j1 for low memory usage
+          # Build at -j1 to stay under memory limits
           mka vendor_bootimage -j1
 
           kill $MONITOR_PID 2>/dev/null || true
 
-          echo "=== Disk after build ==="
+          echo "=== Disk AFTER build ==="
           df -h /
-          echo "=== Memory after build ==="
+          echo "=== Memory AFTER build ==="
           free -h
 
       - name: List build outputs
@@ -198,7 +200,7 @@ jobs:
           echo "=== Build outputs ==="
           ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files found"
           echo ""
-          echo "=== Full out dir ==="
+          echo "=== All files in out dir ==="
           find ~/lineage/out/target/product/X6525 -maxdepth 1 -type f 2>/dev/null | head -30
           echo ""
           echo "=== Final disk ==="
