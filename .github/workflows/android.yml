@@ -21,30 +21,20 @@ jobs:
           remove-docker-images: 'true'
           overprovision-lvm: 'true'
 
-      - name: Verify disk space after cleanup
-        run: |
-          echo "=== Disk space ==="
-          df -h /
-          echo ""
-          echo "=== Top directories ==="
-          du -sh /usr/* 2>/dev/null | sort -h | tail -10
-
       - name: Extra aggressive cleanup
         run: |
-          # Remove additional big dirs
           sudo rm -rf /usr/share/dotnet 2>/dev/null || true
           sudo rm -rf /usr/local/lib/android 2>/dev/null || true
           sudo rm -rf /opt/ghc 2>/dev/null || true
           sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
           sudo rm -rf /usr/local/share/boost 2>/dev/null || true
-          sudo rm -rf /usr/lib/jvm 2>/dev/null || true
           sudo rm -rf /usr/share/swift 2>/dev/null || true
           sudo rm -rf /usr/share/miniconda 2>/dev/null || true
           sudo apt-get clean
           sudo apt-get autoclean
-          
-          echo "=== Disk after extra cleanup ==="
+          echo "=== Disk after cleanup ==="
           df -h /
+          df -i /
 
       - name: Install build deps
         run: |
@@ -74,6 +64,9 @@ jobs:
           echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=20G" >> $GITHUB_ENV
+          echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
+          echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
+          echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
 
       - name: Cache repo
         uses: actions/cache@v4
@@ -82,22 +75,23 @@ jobs:
             ~/lineage/.repo
             ~/lineage/.repo/projects
             ~/lineage/.repo/project-objects
-          key: reposync-lineage22-v3
-          restore-keys: reposync-lineage22-
+          key: reposync-lineage20-v1
+          restore-keys: reposync-lineage20-
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-lineage22-v3
-          restore-keys: ccache-lineage22-
+          key: ccache-lineage20-v1
+          restore-keys: ccache-lineage20-
 
-      - name: Init LineageOS 22.1
+      - name: Init LineageOS 20.0
         run: |
-          mkdir -p ~/lineage && cd ~/lineage
+          mkdir -p ~/lineage/tmp
+          cd ~/lineage
           repo init \
             -u https://github.com/LineageOS/android.git \
-            -b lineage-22.1 \
+            -b lineage-20.0 \
             --depth=1 \
             --partial-clone \
             --clone-filter=blob:none \
@@ -118,18 +112,21 @@ jobs:
       - name: Sync sources
         run: |
           cd ~/lineage
+          mkdir -p ~/lineage/tmp
+          export TMPDIR=$HOME/lineage/tmp
+
           echo "=== Disk before sync ==="
           df -h /
-          
-          # Sync with progress
+          df -i /
+          df -h ~/lineage/tmp
+
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
             --optimized-fetch --prune || \
           repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
-          
+
           echo "=== Disk after sync ==="
           df -h /
-          echo "=== .repo size ==="
           du -sh .repo/
 
       - name: Prepare kernel
@@ -147,15 +144,18 @@ jobs:
       - name: Build Lineage Recovery
         run: |
           cd ~/lineage
+          mkdir -p ~/lineage/tmp
+          export TMPDIR=$HOME/lineage/tmp
+
           echo "=== Disk before build ==="
           df -h /
-          
+
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
           mka vendor_bootimage -j2
-          
+
           echo "=== Disk after build ==="
           df -h /
 
