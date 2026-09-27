@@ -9,53 +9,62 @@ jobs:
     timeout-minutes: 480
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 512
-          swap-size-mb: 8192
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-
-      - name: Verify cleanup worked
+      - name: Check disk before cleanup
         run: |
-          echo "=== Disk after maximize-build-space ==="
+          echo "=== Base disk ==="
           df -h /
-          echo ""
-          echo "=== What's using space in /usr ==="
-          du -sh /usr/* 2>/dev/null | sort -h | tail -10
-          echo ""
-          echo "=== What's using space in /opt ==="
-          du -sh /opt/* 2>/dev/null | sort -h | tail -10
-          echo ""
-          echo "=== Memory ==="
-          free -h
-          echo "=== Swap ==="
-          swapon --show
+          echo "=== What's big? ==="
+          sudo du -sh /usr/local /usr/share /opt /var /home 2>/dev/null | sort -h
 
-      - name: Extra aggressive cleanup
+      - name: Manual cleanup (no maximize-build-space)
         run: |
-          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+          # Remove big pre-installed stuff
           sudo rm -rf /usr/local/lib/android 2>/dev/null || true
-          sudo rm -rf /opt/ghc 2>/dev/null || true
-          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
           sudo rm -rf /usr/local/share/boost 2>/dev/null || true
-          sudo rm -rf /usr/share/swift 2>/dev/null || true
-          sudo rm -rf /usr/share/miniconda 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
           sudo rm -rf /usr/local/aws-cli 2>/dev/null || true
           sudo rm -rf /usr/local/.ghcup 2>/dev/null || true
-          sudo rm -rf /usr/lib/google-cloud-sdk 2>/dev/null || true
-          sudo rm -rf /usr/local/share/chromium 2>/dev/null || true
+          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
           sudo rm -rf /opt/microsoft 2>/dev/null || true
+          sudo rm -rf /opt/az 2>/dev/null || true
+          sudo rm -rf /opt/google 2>/dev/null || true
+          sudo rm -rf /opt/pipx 2>/dev/null || true
+          sudo rm -rf /opt/runner-cache 2>/dev/null || true
+          sudo rm -rf /opt/actionarchivecache 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+          sudo rm -rf /usr/share/swift 2>/dev/null || true
+          sudo rm -rf /usr/share/miniconda 2>/dev/null || true
+          sudo rm -rf /usr/lib/google-cloud-sdk 2>/dev/null || true
+          sudo rm -rf /usr/lib/jvm 2>/dev/null || true
+          sudo rm -rf /usr/lib/firefox 2>/dev/null || true
+          sudo rm -rf /usr/lib/mono 2>/dev/null || true
+          sudo rm -rf /usr/share/gradle 2>/dev/null || true
+          sudo rm -rf /usr/share/php 2>/dev/null || true
+          sudo rm -rf /usr/share/kotlin 2>/dev/null || true
+          sudo rm -rf /usr/share/java 2>/dev/null || true
+          
+          # Remove docker images
+          sudo docker image prune -a -f 2>/dev/null || true
+          sudo docker system prune -a -f 2>/dev/null || true
+          
+          # Clean apt
           sudo apt-get clean
           sudo apt-get autoclean
-          echo "=== Disk after extra cleanup ==="
+          sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+          sudo rm -rf /var/cache/apt/archives/* 2>/dev/null || true
+          
+          echo "=== Disk after cleanup ==="
           df -h /
-          df -i /
+
+      - name: Add swap manually
+        run: |
+          sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "=== Swap active ==="
+          swapon --show
+          free -h
 
       - name: Install build deps
         run: |
@@ -89,11 +98,6 @@ jobs:
           echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
-
-      # ================================================
-      # CACHE STEPS REMOVED COMPLETELY
-      # First build must be clean — no stale .repo
-      # ================================================
 
       - name: Init LineageOS 20.0
         run: |
@@ -129,7 +133,6 @@ jobs:
 
           echo "=== Disk BEFORE sync ==="
           df -h /
-          df -i /
 
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
@@ -168,26 +171,14 @@ jobs:
           df -h /
           echo "=== Memory BEFORE build ==="
           free -h
-          echo "=== Swap ==="
-          swapon --show
 
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
 
-          # Background memory monitor
-          ( while true; do \
-              echo "=== $(date +%H:%M:%S) memory ==="; \
-              free -h | head -2 | tail -1; \
-              sleep 60; \
-            done ) &
-          MONITOR_PID=$!
-
-          # Build at -j1 to stay under memory limits
-          mka vendor_bootimage -j1
-
-          kill $MONITOR_PID 2>/dev/null || true
+          # With 15 GB RAM, use -j4
+          mka vendor_bootimage -j4
 
           echo "=== Disk AFTER build ==="
           df -h /
@@ -199,10 +190,7 @@ jobs:
         run: |
           echo "=== Build outputs ==="
           ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files found"
-          echo ""
-          echo "=== All files in out dir ==="
           find ~/lineage/out/target/product/X6525 -maxdepth 1 -type f 2>/dev/null | head -30
-          echo ""
           echo "=== Final disk ==="
           df -h /
 
