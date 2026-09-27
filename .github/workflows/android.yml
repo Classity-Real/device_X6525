@@ -17,21 +17,15 @@ jobs:
           echo "=== Disk usage BEFORE cleanup ==="
           df -h /
           echo ""
-          echo "=== Top 20 largest directories in / ==="
+          echo "=== Top 20 largest directories ==="
           sudo du -hx --max-depth=1 / 2>/dev/null | sort -hr | head -20
-          echo ""
-          echo "=== /usr breakdown ==="
-          sudo du -hx --max-depth=1 /usr 2>/dev/null | sort -hr | head -15
-          echo ""
-          echo "=== /opt breakdown ==="
-          sudo du -hx --max-depth=1 /opt 2>/dev/null | sort -hr | head -15
           echo ""
           echo "=== Memory + Swap ==="
           free -h
           swapon --show
 
       # ==========================================
-      # STEP 2: Manual cleanup (no maximize-build-space)
+      # STEP 2: Manual cleanup
       # ==========================================
       - name: Free space manually
         run: |
@@ -71,17 +65,28 @@ jobs:
           df -h /
 
       # ==========================================
-      # STEP 3: Verify swap (runner already has it)
+      # STEP 3: Add EXTRA SWAP (the OOM fix)
       # ==========================================
-      - name: Verify swap
+      - name: Add extra swap
         run: |
           echo "=== Existing swap ==="
           swapon --show
-          echo ""
-          echo "=== Memory ==="
+
+          # Create 20 GB swap file on /mnt (usually has room)
+          echo "Creating 20G extra swap..."
+          sudo fallocate -l 20G /mnt/extra-swap || \
+            sudo dd if=/dev/zero of=/mnt/extra-swap bs=1M count=20480
+          sudo chmod 600 /mnt/extra-swap
+          sudo mkswap /mnt/extra-swap
+          sudo swapon /mnt/extra-swap
+
+          # Lower swappiness so kernel prefers RAM (faster) but uses swap when needed
+          sudo sysctl vm.swappiness=10
+          sudo sysctl vm.vfs_cache_pressure=50
+
+          echo "=== Total memory now ==="
           free -h
-          echo ""
-          echo "=== Disk ==="
+          swapon --show
           df -h /
 
       # ==========================================
@@ -111,15 +116,20 @@ jobs:
           echo "$HOME/bin" >> $GITHUB_PATH
 
       # ==========================================
-      # STEP 6: Configure git and TMPDIR (NO ccache)
+      # STEP 6: Configure git, TMPDIR, MAKEFLAGS
       # ==========================================
-      - name: Configure git and TMPDIR
+      - name: Configure git and env
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
+          # Force single-threaded builds everywhere
+          echo "MAKEFLAGS=-j1" >> $GITHUB_ENV
+          echo "NINJA_ARGS=-j1" >> $GITHUB_ENV
+          echo "SOONG_JOBS=1" >> $GITHUB_ENV
+          echo "GOMAXPROCS=1" >> $GITHUB_ENV
 
       # ==========================================
       # STEP 7: Init LineageOS 20.0
@@ -179,7 +189,6 @@ jobs:
           cd ~/lineage
           echo "=== Before cleanup ==="
           df -h /
-          # Remove git pack files we don't need for the build
           find .repo/projects -name "*.pack" -delete 2>/dev/null || true
           find .repo/projects -name "*.idx" -delete 2>/dev/null || true
           find .repo/project-objects -name "*.pack" -delete 2>/dev/null || true
@@ -199,23 +208,22 @@ jobs:
           fi
           echo "=== prebuilts contents ==="
           ls -la
-          echo "=== kernel type ==="
           file kernel || true
-          echo "=== dtb type ==="
           file dtb.img || true
-          echo "=== dtbo type ==="
           file dtbo.img || true
           echo "=== modules count ==="
           ls modules_recovery_ramdisk/*.ko 2>/dev/null | wc -l
 
       # ==========================================
-      # STEP 12: Build Lineage Recovery (-j1, NO ccache)
+      # STEP 12: Build Lineage Recovery
       # ==========================================
       - name: Build Lineage Recovery
         run: |
           cd ~/lineage
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
+          export MAKEFLAGS="-j1"
+          export NINJA_ARGS="-j1"
 
           echo "=== Disk BEFORE build ==="
           df -h /
@@ -227,7 +235,7 @@ jobs:
           source build/envsetup.sh
           lunch lineage_X6525-userdebug
 
-          # Periodic status check in background
+          # Monitor disk + memory every 2 min
           ( while true; do \
               echo "=== $(date +%H:%M:%S) ==="; \
               df -h / | tail -1; \
@@ -236,7 +244,7 @@ jobs:
             done ) &
           MONITOR_PID=$!
 
-          # NO ccache, -j1 build
+          # Build with -j1 (single-threaded)
           mka vendor_bootimage -j1
 
           kill $MONITOR_PID 2>/dev/null || true
@@ -245,9 +253,11 @@ jobs:
           df -h /
           echo "=== Memory AFTER build ==="
           free -h
+          echo "=== Swap AFTER build ==="
+          swapon --show
 
       # ==========================================
-      # STEP 13: List outputs (always)
+      # STEP 13: List outputs
       # ==========================================
       - name: List build outputs
         if: always()
@@ -274,7 +284,7 @@ jobs:
           retention-days: 14
 
       # ==========================================
-      # STEP 15: Upload build logs (always)
+      # STEP 15: Upload build logs
       # ==========================================
       - name: Upload build logs
         if: always()
