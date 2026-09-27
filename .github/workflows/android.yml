@@ -9,6 +9,9 @@ jobs:
     timeout-minutes: 480
 
     steps:
+      # ==========================================
+      # STEP 1: Audit disk before ANY cleanup
+      # ==========================================
       - name: Audit disk usage
         run: |
           echo "=== Disk usage BEFORE cleanup ==="
@@ -27,6 +30,9 @@ jobs:
           free -h
           swapon --show
 
+      # ==========================================
+      # STEP 2: Manual cleanup (no maximize-build-space)
+      # ==========================================
       - name: Free space manually
         run: |
           sudo rm -rf /usr/local/lib/android      || true
@@ -64,6 +70,9 @@ jobs:
           echo "=== Disk AFTER cleanup ==="
           df -h /
 
+      # ==========================================
+      # STEP 3: Verify swap (runner already has it)
+      # ==========================================
       - name: Verify swap
         run: |
           echo "=== Existing swap ==="
@@ -75,11 +84,14 @@ jobs:
           echo "=== Disk ==="
           df -h /
 
+      # ==========================================
+      # STEP 4: Install build dependencies
+      # ==========================================
       - name: Install build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            bc bison build-essential curl flex g++-multilib gcc-multilib \
             git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
             lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev \
             libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
@@ -88,6 +100,9 @@ jobs:
           echo "=== Disk after deps ==="
           df -h /
 
+      # ==========================================
+      # STEP 5: Install repo tool
+      # ==========================================
       - name: Install repo
         run: |
           mkdir -p ~/bin
@@ -95,19 +110,20 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Configure git and ccache
+      # ==========================================
+      # STEP 6: Configure git and TMPDIR (NO ccache)
+      # ==========================================
+      - name: Configure git and TMPDIR
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=20G" >> $GITHUB_ENV
           echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
 
+      # ==========================================
+      # STEP 7: Init LineageOS 20.0
+      # ==========================================
       - name: Init LineageOS 20.0
         run: |
           mkdir -p ~/lineage/tmp
@@ -122,6 +138,9 @@ jobs:
           echo "=== Disk after init ==="
           df -h /
 
+      # ==========================================
+      # STEP 8: Checkout device tree
+      # ==========================================
       - name: Checkout device tree
         uses: actions/checkout@v4
         with:
@@ -134,6 +153,9 @@ jobs:
           echo "=== Device tree files ==="
           ls -la ~/lineage/device/infinix/X6525/
 
+      # ==========================================
+      # STEP 9: Sync sources
+      # ==========================================
       - name: Sync sources
         run: |
           cd ~/lineage
@@ -149,6 +171,25 @@ jobs:
           df -h /
           du -sh .repo/
 
+      # ==========================================
+      # STEP 10: Free space after sync
+      # ==========================================
+      - name: Free space after sync
+        run: |
+          cd ~/lineage
+          echo "=== Before cleanup ==="
+          df -h /
+          # Remove git pack files we don't need for the build
+          find .repo/projects -name "*.pack" -delete 2>/dev/null || true
+          find .repo/projects -name "*.idx" -delete 2>/dev/null || true
+          find .repo/project-objects -name "*.pack" -delete 2>/dev/null || true
+          find .repo/project-objects -name "*.idx" -delete 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      # ==========================================
+      # STEP 11: Prepare kernel/dtb/dtbo
+      # ==========================================
       - name: Prepare kernel
         run: |
           cd ~/lineage/device/infinix/X6525/prebuilts
@@ -167,34 +208,47 @@ jobs:
           echo "=== modules count ==="
           ls modules_recovery_ramdisk/*.ko 2>/dev/null | wc -l
 
+      # ==========================================
+      # STEP 12: Build Lineage Recovery (-j2, NO ccache)
+      # ==========================================
       - name: Build Lineage Recovery
         run: |
           cd ~/lineage
           mkdir -p ~/lineage/tmp
           export TMPDIR=$HOME/lineage/tmp
+
           echo "=== Disk BEFORE build ==="
           df -h /
           echo "=== Memory BEFORE build ==="
           free -h
           echo "=== Swap ==="
           swapon --show
+
           source build/envsetup.sh
-          ccache -M 20G
-          ccache -z
           lunch lineage_X6525-userdebug
+
+          # Periodic status check in background
           ( while true; do \
-              echo "=== $(date +%H:%M:%S) memory ==="; \
+              echo "=== $(date +%H:%M:%S) ==="; \
+              df -h / | tail -1; \
               free -h | head -2 | tail -1; \
               sleep 120; \
             done ) &
           MONITOR_PID=$!
-          mka vendor_bootimage -j4
+
+          # NO ccache, -j2 build
+          mka vendor_bootimage -j2
+
           kill $MONITOR_PID 2>/dev/null || true
+
           echo "=== Disk AFTER build ==="
           df -h /
           echo "=== Memory AFTER build ==="
           free -h
 
+      # ==========================================
+      # STEP 13: List outputs (always)
+      # ==========================================
       - name: List build outputs
         if: always()
         run: |
@@ -207,6 +261,9 @@ jobs:
           echo "=== Final disk ==="
           df -h /
 
+      # ==========================================
+      # STEP 14: Upload vendor_boot.img
+      # ==========================================
       - name: Upload vendor_boot
         if: success()
         uses: actions/upload-artifact@v4
@@ -216,6 +273,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # ==========================================
+      # STEP 15: Upload build logs (always)
+      # ==========================================
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -226,7 +286,3 @@ jobs:
             ~/lineage/out/error.log
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Show ccache stats
-        if: always()
-        run: ccache -s 2>/dev/null || true
