@@ -12,14 +12,39 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 512
-          swap-size-mb: 8192
+          root-reserve-mb: 1024
+          swap-size-mb: 2048
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
           overprovision-lvm: 'true'
+
+      - name: Verify disk space after cleanup
+        run: |
+          echo "=== Disk space ==="
+          df -h /
+          echo ""
+          echo "=== Top directories ==="
+          du -sh /usr/* 2>/dev/null | sort -h | tail -10
+
+      - name: Extra aggressive cleanup
+        run: |
+          # Remove additional big dirs
+          sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/android 2>/dev/null || true
+          sudo rm -rf /opt/ghc 2>/dev/null || true
+          sudo rm -rf /opt/hostedtoolcache 2>/dev/null || true
+          sudo rm -rf /usr/local/share/boost 2>/dev/null || true
+          sudo rm -rf /usr/lib/jvm 2>/dev/null || true
+          sudo rm -rf /usr/share/swift 2>/dev/null || true
+          sudo rm -rf /usr/share/miniconda 2>/dev/null || true
+          sudo apt-get clean
+          sudo apt-get autoclean
+          
+          echo "=== Disk after extra cleanup ==="
+          df -h /
 
       - name: Install build deps
         run: |
@@ -31,6 +56,7 @@ jobs:
             libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
             schedtool squashfs-tools xsltproc zip zlib1g-dev \
             python3 python-is-python3 openjdk-11-jdk
+          df -h /
 
       - name: Install repo
         run: |
@@ -56,14 +82,14 @@ jobs:
             ~/lineage/.repo
             ~/lineage/.repo/projects
             ~/lineage/.repo/project-objects
-          key: reposync-lineage22-v2
+          key: reposync-lineage22-v3
           restore-keys: reposync-lineage22-
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-lineage22-v2
+          key: ccache-lineage22-v3
           restore-keys: ccache-lineage22-
 
       - name: Init LineageOS 22.1
@@ -73,6 +99,8 @@ jobs:
             -u https://github.com/LineageOS/android.git \
             -b lineage-22.1 \
             --depth=1 \
+            --partial-clone \
+            --clone-filter=blob:none \
             --no-tags
 
       - name: Checkout device tree
@@ -90,10 +118,19 @@ jobs:
       - name: Sync sources
         run: |
           cd ~/lineage
+          echo "=== Disk before sync ==="
+          df -h /
+          
+          # Sync with progress
           repo sync -c -j4 \
             --force-sync --no-clone-bundle --no-tags \
             --optimized-fetch --prune || \
           repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
+          
+          echo "=== Disk after sync ==="
+          df -h /
+          echo "=== .repo size ==="
+          du -sh .repo/
 
       - name: Prepare kernel
         run: |
@@ -110,17 +147,26 @@ jobs:
       - name: Build Lineage Recovery
         run: |
           cd ~/lineage
+          echo "=== Disk before build ==="
+          df -h /
+          
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
           mka vendor_bootimage -j2
+          
+          echo "=== Disk after build ==="
+          df -h /
 
       - name: List build outputs
         if: always()
         run: |
           echo "=== Build outputs ==="
           ls -la ~/lineage/out/target/product/X6525/*.img 2>/dev/null || echo "No .img files"
+          echo ""
+          echo "=== Final disk ==="
+          df -h /
 
       - name: Upload vendor_boot
         if: success()
