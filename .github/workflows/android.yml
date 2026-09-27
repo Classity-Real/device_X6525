@@ -245,7 +245,7 @@ jobs:
           MONITOR_PID=$!
 
           # Build with -j1 (single-threaded)
-          mka vendor_bootimage -j1
+          mka vendorbootimage -j1
 
           kill $MONITOR_PID 2>/dev/null || true
 
