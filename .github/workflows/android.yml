@@ -6,20 +6,19 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
+    timeout-minutes: 480
 
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 1024
-          swap-size-mb: 2048
+          root-reserve-mb: 512
+          swap-size-mb: 8192
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
-          overprovision-lvm: 'true'
 
       - name: Extra aggressive cleanup
         run: |
@@ -30,11 +29,15 @@ jobs:
           sudo rm -rf /usr/local/share/boost 2>/dev/null || true
           sudo rm -rf /usr/share/swift 2>/dev/null || true
           sudo rm -rf /usr/share/miniconda 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell 2>/dev/null || true
+          sudo rm -rf /usr/local/aws-cli 2>/dev/null || true
           sudo apt-get clean
           sudo apt-get autoclean
           echo "=== Disk after cleanup ==="
           df -h /
           df -i /
+          echo "=== Memory ==="
+          free -h
 
       - name: Install build deps
         run: |
@@ -47,6 +50,7 @@ jobs:
             schedtool squashfs-tools xsltproc zip zlib1g-dev \
             python3 python-is-python3 openjdk-11-jdk
           df -h /
+          free -h
 
       - name: Install repo
         run: |
@@ -64,6 +68,7 @@ jobs:
           echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=20G" >> $GITHUB_ENV
+          echo "CCACHE_NOCOMPRESS=1" >> $GITHUB_ENV
           echo "TMPDIR=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TEMP=$HOME/lineage/tmp" >> $GITHUB_ENV
           echo "TMP=$HOME/lineage/tmp" >> $GITHUB_ENV
@@ -75,14 +80,14 @@ jobs:
             ~/lineage/.repo
             ~/lineage/.repo/projects
             ~/lineage/.repo/project-objects
-          key: reposync-lineage20-v1
+          key: reposync-lineage20-v2
           restore-keys: reposync-lineage20-
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-lineage20-v1
+          key: ccache-lineage20-v2
           restore-keys: ccache-lineage20-
 
       - name: Init LineageOS 20.0
@@ -149,15 +154,31 @@ jobs:
 
           echo "=== Disk before build ==="
           df -h /
+          echo "=== Memory before build ==="
+          free -h
 
           source build/envsetup.sh
           ccache -M 20G
           ccache -z
           lunch lineage_X6525-userdebug
-          mka vendor_bootimage -j2
+
+          # Monitor memory in background every 60s
+          ( while true; do \
+              echo "=== $(date +%H:%M:%S) memory ==="; \
+              free -h | head -2 | tail -1; \
+              sleep 60; \
+            done ) &
+          MONITOR_PID=$!
+
+          # Build with LOW parallelism to fit in 7 GB RAM
+          mka vendor_bootimage -j1
+
+          kill $MONITOR_PID 2>/dev/null || true
 
           echo "=== Disk after build ==="
           df -h /
+          echo "=== Memory after build ==="
+          free -h
 
       - name: List build outputs
         if: always()
@@ -167,6 +188,8 @@ jobs:
           echo ""
           echo "=== Final disk ==="
           df -h /
+          echo "=== Final memory ==="
+          free -h
 
       - name: Upload vendor_boot
         if: success()
@@ -175,6 +198,17 @@ jobs:
           name: lineage-X6525-vendor_boot
           path: ~/lineage/out/target/product/X6525/vendor_boot.img
           retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ~/lineage/out/verbose.log.gz
+            ~/lineage/out/error.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Show ccache stats
         if: always()
