@@ -209,7 +209,7 @@ jobs:
           ls modules_recovery_ramdisk/*.ko 2>/dev/null | wc -l
 
       # ==========================================
-      # STEP 12: Build Lineage Recovery (-j2, NO ccache)
+      # STEP 12: Build Lineage Recovery (-j1, NO ccache)
       # ==========================================
       - name: Build Lineage Recovery
         run: |
@@ -236,8 +236,8 @@ jobs:
             done ) &
           MONITOR_PID=$!
 
-          # NO ccache, -j2 build
-          mka vendor_bootimage -j2
+          # NO ccache, -j1 build
+          mka vendor_bootimage -j1
 
           kill $MONITOR_PID 2>/dev/null || true
 
